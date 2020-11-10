@@ -1,27 +1,16 @@
-$ErrorActionPreference="Stop"
-Add-Type -AssemblyName System.Windows.Forms
-If(-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent() ).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator"))
+param(
+    [parameter(Mandatory=$false)]
+    [switch]$SetRandomIp
+)
+function ResetIP
 {
-    Start-Process powershell.exe "-executionpolicy bypass","-File",('"{0}"' -f $MyInvocation.MyCommand.Path) -Verb RunAs
-    exit
+    Set-NetIPInterface -InterfaceAlias $($netAdapter.Name) -Dhcp Enable
+    Enable-NetAdapterBinding -InterfaceAlias $($netAdapter.Name) -ComponentID ms_tcpip6
 }
-    
-#Selection de la carte réseau active
-$netAdapter = (Get-NetAdapter).Where{$_.Status -eq "Up"}
-$initialConfiguration = Get-NetIPConfiguration -InterfaceAlias $($netAdapter.Name)
-
-do
-{
-Write-Host @"
-[1] - Attribution d'une Addresse IP Local aléatoire
-[2] - Export de la configuration r�seau initiale
-[3] - Mise en place DHCP + IPv6 (~reinitialisation)
-[Q] - Quitter
-"@
-$result = Read-Host "Votre Choix : "
-if($result -eq "1")
+function RandomIp
 {
     $actualConfiguration = Get-NetIPConfiguration -InterfaceAlias $($netAdapter.Name)
+    $actualIPInterface = Get-NetIPInterface -InterfaceAlias $($netAdapter.Name)
     #Désactivation de l'IPV6
     Disable-NetAdapterBinding -InterfaceAlias $($netAdapter.Name) -ComponentID ms_tcpip6
     #Récupération de l'IP IPv4
@@ -35,9 +24,41 @@ if($result -eq "1")
     #Désactivation DHCP 
     Set-NetIPInterface -InterfaceAlias $($netAdapter.Name) -Dhcp Disable
     #Attribution de l'IP
-    New-NetIPAddress -InterfaceAlias $($netAdapter.Name) -IPAddress $newIP -PrefixLength 24 -DefaultGateway $($actualConfiguration.IPv4DefaultGateway.NextHop)
+    try
+    {
+        New-NetIPAddress -InterfaceAlias $($netAdapter.Name) -IPAddress $newIP -PrefixLength 24 -DefaultGateway $($actualConfiguration.IPv4DefaultGateway.NextHop) -AddressFamily IPv4 -ErrorAction Stop
+    } 
+    catch
+    {
+        New-NetIPAddress -InterfaceAlias $($netAdapter.Name) -IPAddress $newIP -PrefixLength 24 -AddressFamily IPv4
+        Remove-NetIPAddress -InterfaceAlias $($netAdapter.Name) -IPAddress $ip -Confirm:$false
+    }
     #Configuration DNS
     Set-DnsClientServerAddress -InterfaceAlias $($netAdapter.Name) -ServerAddresses $($actualConfiguration.DNSServer.ServerAddresses)
+}
+Add-Type -AssemblyName System.Windows.Forms
+If(-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent() ).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator"))
+{
+    Start-Process powershell.exe "-executionpolicy bypass","-File",('"{0}"' -f $MyInvocation.MyCommand.Path) -Verb RunAs
+    exit
+}
+#Selection de la carte réseau active
+$netAdapter = (Get-NetAdapter).Where{$_.Status -eq "Up"}
+$initialConfiguration = Get-NetIPConfiguration -InterfaceAlias $($netAdapter.Name)
+if($SetRandomIp -eq $false)
+{
+do
+{
+Write-Host @"
+[1] - Attribution d'une Addresse IP Local aléatoire
+[2] - Export de la configuration r�seau initiale
+[3] - Mise en place DHCP + IPv6 (~reinitialisation)
+[Q] - Quitter
+"@
+$result = Read-Host "Votre Choix "
+if($result -eq "1")
+{
+    RandomIp
 }
 if($result -eq "2")
 {
@@ -56,12 +77,16 @@ if($result -eq "2")
 }
 if($result -eq "3")
 {
-    Set-NetIPInterface -InterfaceAlias $($netAdapter.Name) -Dhcp Enable
-    Enable-NetAdapterBinding -InterfaceAlias $($netAdapter.Name) -ComponentID ms_tcpip6
+    ResetIP
 }
 
 }
 while($result -ne "Q")
+}
+else
+{
+    RandomIp
+}
 
 
 
